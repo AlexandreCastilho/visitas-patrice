@@ -122,6 +122,7 @@
   <label>Grupo C <input type="number" id="limC" min="1" inputmode="numeric"></label>
   <button class="botaoTexto" id="btnDesfazer"></button>
   <div class="sub" id="infoDados" style="margin-top:12px"></div>
+  <div class="sub" id="statusSync" style="margin-top:6px"></div>
   <div class="botoes">
     <button class="sec" id="btnCancelar">Cancelar</button>
     <button id="btnSalvar">Salvar</button>
@@ -130,7 +131,7 @@
 
 <script>
 (() => {
-  const LS = { grupos: 'visitas.grupos', chave: 'visitas.chave', lim: 'visitas.limites', grupo: 'visitas.grupo', ordem: 'visitas.ordem' };
+  const LS = { grupos: 'visitas.grupos2', token: 'visitas.token', chave: 'visitas.chave', lim: 'visitas.limites', grupo: 'visitas.grupo', ordem: 'visitas.ordem' };
   const PADRAO = { A: 30, B: 60, C: 90 };
   const $ = (id) => document.getElementById(id);
   let dados = null, pos = null;
@@ -142,7 +143,10 @@
   };
   if (estado.ordem === 'perto') estado.ordem = 'urgencia'; // geolocalização só quando ela pedir
   const NOME_GRUPO = { A: 'Grupo A', B: 'Grupo B', C: 'Grupo C', X: 'Fora da carteira' };
-  const trocas = () => JSON.parse(localStorage.getItem(LS.grupos) || '{}');
+  // Mudanças de grupo: { chaveDoMedico: { g: 'A'|'B'|'C'|'X'|null, t: timestamp } }.
+  // g null = voltou ao grupo da planilha. Sincronizado via GitHub (sync/grupos.enc).
+  const lerTrocas = () => JSON.parse(localStorage.getItem(LS.grupos) || '{}');
+  const trocas = () => { const r = {}; for (const [k, v] of Object.entries(lerTrocas())) if (v.g) r[k] = v.g; return r; };
   const abertos = new Set();
   const limites = () => Object.assign({}, PADRAO, JSON.parse(localStorage.getItem(LS.lim) || '{}'));
 
@@ -152,6 +156,14 @@
     // A chave fica também no endereço: no iPhone, o ícone da tela de início
     // guarda o endereço atual e tem armazenamento separado do navegador.
     localStorage.setItem(LS.chave, hash.get('k'));
+  }
+  if (hash.get('t')) localStorage.setItem(LS.token, hash.get('t'));
+  // Migra mudanças feitas na versão anterior (só no aparelho).
+  if (localStorage.getItem('visitas.grupos')) {
+    const velho = JSON.parse(localStorage.getItem('visitas.grupos')), novo = lerTrocas();
+    for (const [k, g] of Object.entries(velho)) if (!novo[k]) novo[k] = { g, t: Date.now() };
+    localStorage.setItem(LS.grupos, JSON.stringify(novo));
+    localStorage.removeItem('visitas.grupos');
   }
 
   function b64(s) { return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)); }
@@ -169,7 +181,8 @@
       return aviso('Sem conexão', 'Não consegui baixar os dados. Verifique a internet e puxe a tela para atualizar.');
     }
     try {
-      const key = await crypto.subtle.importKey('raw', b64url(k), 'AES-GCM', false, ['decrypt']);
+      chaveCripto = await crypto.subtle.importKey('raw', b64url(k), 'AES-GCM', false, ['encrypt', 'decrypt']);
+      const key = chaveCripto;
       const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(enc.iv) }, key, b64(enc.ct));
       dados = JSON.parse(new TextDecoder().decode(pt));
     } catch (e) {
@@ -180,6 +193,78 @@
     $('atualizado').textContent = 'Atualizado ' + quando(g);
     $('infoDados').textContent = `Dados de ${fmtData(dados.historicoDesde)} até ${fmtData(dados.ultimoCheck)} · ${dados.totalChecks} registros no minhavisita.`;
     render();
+    sincronizar();
+  }
+
+  // ---- sincronização das mudanças de grupo (arquivo criptografado no GitHub)
+  const REPO_API = 'https://api.github.com/repos/AlexandreCastilho/visitas-patrice/contents/sync/grupos.enc';
+  let chaveCripto = null, sincronizando = null, statusSync = '';
+  const toB64 = (u8) => btoa(String.fromCharCode(...u8));
+  async function cifrar(obj) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, chaveCripto, new TextEncoder().encode(JSON.stringify(obj))));
+    return JSON.stringify({ v: 1, iv: toB64(iv), ct: toB64(ct) });
+  }
+  async function decifrar(txt) {
+    const { iv, ct } = JSON.parse(txt);
+    return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(iv) }, chaveCripto, b64(ct))));
+  }
+  function mesclar(a, b) {
+    const r = Object.assign({}, a);
+    for (const [k, v] of Object.entries(b)) if (!r[k] || v.t > r[k].t) r[k] = v;
+    return r;
+  }
+  function sincronizar() {
+    // Uma sincronização por vez; se pedirem outra no meio, roda de novo no fim.
+    if (sincronizando) { sincronizando.denovo = true; return sincronizando.p; }
+    const ctl = { denovo: false };
+    ctl.p = (async () => {
+      do { ctl.denovo = false; await sincronizarUmaVez(); } while (ctl.denovo);
+      sincronizando = null;
+    })();
+    sincronizando = ctl;
+    return ctl.p;
+  }
+  async function sincronizarUmaVez() {
+    const token = localStorage.getItem(LS.token);
+    if (!token || !chaveCripto) { statusSync = 'As mudanças de grupo ficam só neste aparelho.'; return; }
+    const h = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' };
+    for (let tentativa = 0; tentativa < 3; tentativa++) {
+      try {
+        let remoto = {}, sha;
+        const r = await fetch(REPO_API + '?ref=main&t=' + Date.now(), { headers: h, cache: 'no-store' });
+        if (r.status === 401 || r.status === 403) { statusSync = 'Código de sincronização inválido ou vencido.'; return; }
+        if (r.ok) {
+          const j = await r.json(); sha = j.sha;
+          remoto = await decifrar(atob(j.content.replace(/\n/g, '')));
+        } else if (r.status !== 404) throw new Error(r.status);
+        const local = lerTrocas();
+        const junto = mesclar(remoto, local);
+        const mudouLocal = JSON.stringify(junto) !== JSON.stringify(local);
+        localStorage.setItem(LS.grupos, JSON.stringify(junto));
+        if (mudouLocal) render();
+        if (JSON.stringify(junto) !== JSON.stringify(remoto)) {
+          const w = await fetch(REPO_API, {
+            method: 'PUT', headers: h,
+            body: JSON.stringify({ message: 'Atualizar grupos', content: btoa(await cifrar(junto)), sha, branch: 'main' }),
+          });
+          if (w.status === 409 || w.status === 422) continue; // outro aparelho salvou junto; tenta de novo
+          if (!w.ok) throw new Error(w.status);
+        }
+        statusSync = 'Mudanças de grupo sincronizadas ' + quando(new Date()) + '.';
+        return;
+      } catch (e) {
+        statusSync = 'Sem conexão para sincronizar. Tento de novo depois.';
+        return;
+      }
+    }
+  }
+  function trocarGrupo(k, g) {
+    const t = lerTrocas();
+    t[k] = { g, t: Date.now() };
+    localStorage.setItem(LS.grupos, JSON.stringify(t));
+    render();
+    sincronizar();
   }
 
   function aviso(titulo, texto) {
@@ -341,10 +426,7 @@
     const b = e.target.closest('[data-trocar]');
     if (b) {
       const m = dados.medicos.find((x) => norm(x.n) === k);
-      const tr = trocas();
-      if (b.dataset.trocar === (m.g || 'X')) delete tr[k]; else tr[k] = b.dataset.trocar;
-      localStorage.setItem(LS.grupos, JSON.stringify(tr));
-      render();
+      trocarGrupo(k, b.dataset.trocar === (m.g || 'X') ? null : b.dataset.trocar);
     }
   });
   $('btnConfig').addEventListener('click', () => {
@@ -352,11 +434,14 @@
     const n = Object.keys(trocas()).length;
     $('btnDesfazer').textContent = n ? `Voltar os grupos da planilha (${n} ${n === 1 ? 'alteração' : 'alterações'})` : '';
     $('btnDesfazer').style.display = n ? '' : 'none';
+    $('statusSync').textContent = statusSync;
     $('dlgConfig').showModal();
   });
   $('btnDesfazer').addEventListener('click', () => {
     if (!confirm('Desfazer todas as mudanças de grupo?')) return;
-    localStorage.removeItem(LS.grupos); $('dlgConfig').close(); render();
+    const t = lerTrocas(), agora = Date.now();
+    for (const k of Object.keys(t)) t[k] = { g: null, t: agora };
+    localStorage.setItem(LS.grupos, JSON.stringify(t)); $('dlgConfig').close(); render(); sincronizar();
   });
   $('btnCancelar').addEventListener('click', () => $('dlgConfig').close());
   $('btnSalvar').addEventListener('click', () => {
@@ -366,7 +451,8 @@
   });
   // Recarrega ao voltar para o app (ex.: depois de abrir o mapa)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && dados && Date.now() - new Date(dados.geradoEm) > 30 * 60e3) carregar();
+    if (document.visibilityState !== 'visible' || !dados) return;
+    if (Date.now() - new Date(dados.geradoEm) > 30 * 60e3) carregar(); else sincronizar();
   });
 
   carregar();

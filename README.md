@@ -41,3 +41,7 @@ Faça commit de `data/carteira.enc` (nunca da planilha ou do JSON).
 - Médicos visitados no minhavisita que não estão na planilha aparecem em "Fora da carteira".
 - A Patrice pode mudar o grupo de qualquer médico em "Detalhes". A mudança fica salva no
   próprio aparelho (não sincroniza entre celular e computador) e pode ser desfeita no ⚙️.
+- Com um código de sincronização (token do GitHub com acesso só a este repositório,
+  permissão Contents: read and write), as mudanças de grupo são salvas em
+  `sync/grupos.enc` (criptografado) e aparecem em todos os aparelhos. O token vai no link
+  de configuração: `…/#k=CHAVE&t=TOKEN`.
