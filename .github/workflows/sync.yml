@@ -1,0 +1,47 @@
+name: Atualizar visitas
+
+on:
+  schedule:
+    # Horário de Manaus (UTC-4): 05h, 12h, 17h e 20h
+    - cron: '0 9 * * *'
+    - cron: '0 16 * * *'
+    - cron: '0 21 * * *'
+    - cron: '0 0 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Baixar visitas do minhavisita
+        env:
+          MV_EMAIL: ${{ secrets.MV_EMAIL }}
+          MV_SENHA: ${{ secrets.MV_SENHA }}
+          APP_KEY: ${{ secrets.APP_KEY }}
+        run: node scripts/sync.mjs
+      - name: Montar o site
+        run: cp index.html manifest.webmanifest icon-*.png _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
