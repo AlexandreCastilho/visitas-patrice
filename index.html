@@ -34,7 +34,7 @@
   .sub { color: var(--sub); font-size: 13px; }
   button { font: inherit; color: inherit; }
   .icone { background: none; border: 0; font-size: 22px; padding: 4px 6px; cursor: pointer; }
-  .resumo { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0 8px; }
+  .resumo { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 8px; }
   .resumo button { background: var(--card); border: 2px solid transparent; border-radius: 12px;
     padding: 8px 6px; text-align: left; cursor: pointer; }
   .resumo button.ativo { border-color: var(--azul); }
@@ -65,7 +65,11 @@
   .meta { color: var(--sub); font-size: 13px; margin-top: 4px; }
   .grupo { display: inline-block; font-size: 11px; font-weight: 700; color: #fff; border-radius: 5px;
     padding: 1px 6px; margin-right: 6px; vertical-align: 1px; }
-  .gA { background: var(--A); } .gB { background: var(--B); } .gC { background: var(--C); }
+  .gA { background: var(--A); } .gB { background: var(--B); } .gC { background: var(--C); } .gX { background: var(--cinza); }
+  .trocar { display: flex; gap: 6px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .trocar button { border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 4px 10px; font-size: 13px; cursor: pointer; }
+  .trocar button.ativo { background: var(--azul); border-color: var(--azul); color: #fff; }
+  .botaoTexto { background: none; border: 0; color: var(--azul); padding: 0; margin-top: 10px; cursor: pointer; font-size: 14px; }
   .acoes { display: flex; gap: 14px; margin-top: 8px; font-size: 14px; }
   .acoes a, .acoes button { color: var(--azul); text-decoration: none; background: none; border: 0; padding: 0; cursor: pointer; }
   .detalhe { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
@@ -116,6 +120,7 @@
   <label>Grupo A <input type="number" id="limA" min="1" inputmode="numeric"></label>
   <label>Grupo B <input type="number" id="limB" min="1" inputmode="numeric"></label>
   <label>Grupo C <input type="number" id="limC" min="1" inputmode="numeric"></label>
+  <button class="botaoTexto" id="btnDesfazer"></button>
   <div class="sub" id="infoDados" style="margin-top:12px"></div>
   <div class="botoes">
     <button class="sec" id="btnCancelar">Cancelar</button>
@@ -125,7 +130,7 @@
 
 <script>
 (() => {
-  const LS = { chave: 'visitas.chave', lim: 'visitas.limites', grupo: 'visitas.grupo', ordem: 'visitas.ordem' };
+  const LS = { grupos: 'visitas.grupos', chave: 'visitas.chave', lim: 'visitas.limites', grupo: 'visitas.grupo', ordem: 'visitas.ordem' };
   const PADRAO = { A: 30, B: 60, C: 90 };
   const $ = (id) => document.getElementById(id);
   let dados = null, pos = null;
@@ -136,6 +141,9 @@
     busca: '',
   };
   if (estado.ordem === 'perto') estado.ordem = 'urgencia'; // geolocalização só quando ela pedir
+  const NOME_GRUPO = { A: 'Grupo A', B: 'Grupo B', C: 'Grupo C', X: 'Fora da carteira' };
+  const trocas = () => JSON.parse(localStorage.getItem(LS.grupos) || '{}');
+  const abertos = new Set();
   const limites = () => Object.assign({}, PADRAO, JSON.parse(localStorage.getItem(LS.lim) || '{}'));
 
   // ---- chave: vem uma vez pelo link de configuração (#k=...) e fica guardada no aparelho
@@ -208,8 +216,8 @@
 
   function situacao(m, lim) {
     const d = diasDesde(m.u);
-    const l = lim[m.g];
-    if (d === null) return { cls: 'nunca', dias: null, score: 1e9 - m.p, atrasado: true };
+    const l = lim[m.g] || lim.C;
+    if (d === null) return { cls: 'nunca', dias: null, score: 1e9 - (m.p || 9999), atrasado: true };
     const cls = d > l ? 'atrasado' : d > l * 0.75 ? 'perto' : 'ok';
     return { cls, dias: d, score: d / l, atrasado: d > l };
   }
@@ -218,15 +226,22 @@
   function render() {
     if (!dados) return;
     const lim = limites();
-    const todos = dados.medicos.map((m) => Object.assign({ s: situacao(m, lim) }, m));
+    const tr = trocas();
+    const todos = dados.medicos.map((m) => {
+      const k = norm(m.n), g0 = m.g || 'X', g = tr[k] || g0;
+      const x = Object.assign({}, m, { k, g0, g, mudou: g !== g0 });
+      x.s = situacao(x, lim);
+      return x;
+    });
 
     // resumo por grupo
-    $('resumo').innerHTML = ['A', 'B', 'C'].map((g) => {
+    $('resumo').innerHTML = ['A', 'B', 'C', 'X'].map((g) => {
       const doGrupo = todos.filter((m) => m.g === g);
       const atr = doGrupo.filter((m) => m.s.atrasado).length;
+      const rot = g === 'X' ? 'Fora da carteira' : `Grupo ${g} atrasados`;
       return `<button data-g="${g}" class="${estado.grupo === g ? 'ativo' : ''}">
-        <b>${atr}<span style="font-size:13px;color:var(--sub);font-weight:400"> / ${doGrupo.length}</span></b>
-        <span>Grupo ${g} atrasados</span></button>`;
+        <b>${g === 'X' ? doGrupo.length : atr}${g === 'X' ? '' : `<span style="font-size:13px;color:var(--sub);font-weight:400"> / ${doGrupo.length}</span>`}</b>
+        <span>${rot}</span></button>`;
     }).join('');
 
     document.querySelectorAll('#filtros .chip').forEach((c) => c.classList.toggle('ativo', c.dataset.f === estado.filtro));
@@ -242,9 +257,9 @@
       lista.forEach((m) => { m.km = m.la != null ? distKm(pos.lat, pos.lng, m.la, m.lo) : 1e6; });
       lista.sort((a, b) => a.km - b.km);
     } else if (estado.ordem === 'posicao') {
-      lista.sort((a, b) => a.p - b.p);
+      lista.sort((a, b) => (a.p || 9999) - (b.p || 9999));
     } else {
-      lista.sort((a, b) => b.s.score - a.s.score || a.p - b.p);
+      lista.sort((a, b) => b.s.score - a.s.score || (a.p || 9999) - (b.p || 9999));
     }
 
     if (!lista.length) {
@@ -265,10 +280,14 @@
       ? `https://maps.apple.com/?q=${encodeURIComponent(titulo(m.n))}&ll=${m.la},${m.lo}`
       : m.e ? `https://maps.apple.com/?q=${encodeURIComponent(m.e)}` : '';
     const hist = m.h && m.h.length ? m.h.map(fmtDia).join(' · ') : 'nenhuma';
-    return `<div class="card ${s.cls}">
+    const selo = m.g === 'X' ? '—' : m.g + (!m.mudou && m.p ? m.p : '');
+    const trocar = ['A', 'B', 'C', 'X'].map((g) =>
+      `<button data-trocar="${g}" class="${m.g === g ? 'ativo' : ''}">${g === 'X' ? 'Fora' : g}</button>`).join('');
+    const origem = m.g0 === 'X' ? 'não está na planilha ABC' : `na planilha: grupo ${m.g0}${m.p ? ', posição ' + m.p : ''}`;
+    return `<div class="card ${s.cls} ${abertos.has(m.k) ? 'aberto' : ''}" data-k="${esc(m.k)}">
       <div class="linha1">
         <div>
-          <div class="nome"><span class="grupo g${m.g}">${m.g}${m.p}</span>${esc(titulo(m.n))}</div>
+          <div class="nome"><span class="grupo g${m.g}">${selo}${m.mudou ? ' ✎' : ''}</span>${esc(titulo(m.n))}</div>
           <div class="meta">${ult}${km}</div>
         </div>
         <div class="dias">${diasTxt}</div>
@@ -282,7 +301,9 @@
         Visitas nos últimos 12 meses: <b>${m.v12}</b><br>
         Últimas visitas: ${hist}<br>
         ${m.on ? 'Última reunião online: ' + fmtData(m.on) + '<br>' : ''}
-        Faturamento jan–set: ${moeda(m.t)} · ativo em ${m.ma} de 9 meses
+        ${m.t ? `Faturamento jan–set: ${moeda(m.t)} · ativo em ${m.ma} de 9 meses<br>` : ''}
+        <div class="trocar">Grupo: ${trocar}</div>
+        <div style="margin-top:4px">${m.mudou ? 'Grupo alterado por você · ' : ''}${origem}</div>
       </div>
     </div>`;
   }
@@ -311,11 +332,31 @@
     } else render();
   });
   $('lista').addEventListener('click', (e) => {
-    if (e.target.closest('[data-abrir]')) e.target.closest('.card').classList.toggle('aberto');
+    const c = e.target.closest('.card'); if (!c) return;
+    const k = c.dataset.k;
+    if (e.target.closest('[data-abrir]')) {
+      c.classList.toggle('aberto');
+      c.classList.contains('aberto') ? abertos.add(k) : abertos.delete(k);
+    }
+    const b = e.target.closest('[data-trocar]');
+    if (b) {
+      const m = dados.medicos.find((x) => norm(x.n) === k);
+      const tr = trocas();
+      if (b.dataset.trocar === (m.g || 'X')) delete tr[k]; else tr[k] = b.dataset.trocar;
+      localStorage.setItem(LS.grupos, JSON.stringify(tr));
+      render();
+    }
   });
   $('btnConfig').addEventListener('click', () => {
     const l = limites(); $('limA').value = l.A; $('limB').value = l.B; $('limC').value = l.C;
+    const n = Object.keys(trocas()).length;
+    $('btnDesfazer').textContent = n ? `Voltar os grupos da planilha (${n} ${n === 1 ? 'alteração' : 'alterações'})` : '';
+    $('btnDesfazer').style.display = n ? '' : 'none';
     $('dlgConfig').showModal();
+  });
+  $('btnDesfazer').addEventListener('click', () => {
+    if (!confirm('Desfazer todas as mudanças de grupo?')) return;
+    localStorage.removeItem(LS.grupos); $('dlgConfig').close(); render();
   });
   $('btnCancelar').addEventListener('click', () => $('dlgConfig').close());
   $('btnSalvar').addEventListener('click', () => {

@@ -38,3 +38,6 @@ Faça commit de `data/carteira.enc` (nunca da planilha ou do JSON).
 
 - "Visita" = qualquer check-in/check-out presencial. Reuniões online não contam.
 - Prazos padrão: Grupo A a cada 30 dias, B a cada 60, C a cada 90. Dá para mudar no ⚙️ do app.
+- Médicos visitados no minhavisita que não estão na planilha aparecem em "Fora da carteira".
+- A Patrice pode mudar o grupo de qualquer médico em "Detalhes". A mudança fica salva no
+  próprio aparelho (não sincroniza entre celular e computador) e pode ser desfeita no ⚙️.

@@ -43,8 +43,8 @@ export function montarDados(carteira, checks, agora = new Date()) {
   const dia = (iso) => new Date(Date.parse(iso) - 4 * 3600e3).toISOString().slice(0, 10);
   const umAnoAtras = new Date(agora.getTime() - 365 * 864e5).toISOString();
 
-  const medicos = carteira.map((m) => {
-    const o = porCliente.get(normalizar(m.nome));
+  const naCarteira = new Set(carteira.map((m) => normalizar(m.nome)));
+  const montar = (m, o) => {
     const dias = o ? [...new Set(o.visitas.map(dia))].sort().reverse() : [];
     const ultima = o && o.visitas.length ? o.visitas.reduce((a, b) => (a > b ? a : b)) : null;
     const lat = o && parseFloat(o.cliente.latitude);
@@ -64,7 +64,14 @@ export function montarDados(carteira, checks, agora = new Date()) {
       lo: Number.isFinite(lng) ? lng : null,
       cad: !!o,                                    // encontrado no minhavisita
     };
-  });
+  };
+
+  const medicos = carteira.map((m) => montar(m, porCliente.get(normalizar(m.nome))));
+  // Clientes visitados no minhavisita que não estão na planilha ABC (grupo vazio).
+  for (const [chave, o] of porCliente) {
+    if (naCarteira.has(chave) || !o.visitas.length) continue;
+    medicos.push(montar({ grupo: null, posicao: null, nome: o.cliente.name.trim().toUpperCase(), total: null, mesesAtivos: null }, o));
+  }
 
   const datas = checks.map((c) => c.deviceCheckinDate).filter(Boolean).sort();
   return {
