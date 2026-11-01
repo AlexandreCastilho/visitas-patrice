@@ -141,8 +141,9 @@
   // ---- chave: vem uma vez pelo link de configuração (#k=...) e fica guardada no aparelho
   const hash = new URLSearchParams(location.hash.slice(1));
   if (hash.get('k')) {
+    // A chave fica também no endereço: no iPhone, o ícone da tela de início
+    // guarda o endereço atual e tem armazenamento separado do navegador.
     localStorage.setItem(LS.chave, hash.get('k'));
-    history.replaceState(null, '', location.pathname + location.search);
   }
 
   function b64(s) { return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)); }
